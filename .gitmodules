@@ -1,0 +1,3 @@
+[submodule "dtbocfg"]
+	path = dtbocfg
+	url = https://github.com/ikwzm/dtbocfg.git
