@@ -1,0 +1,80 @@
+/dts-v1/;
+
+#include <dt-bindings/pinctrl/stm32-pinfunc.h>
+/plugin/;
+/ {
+	fragment@0 {
+		target = <&usart6>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+	fragment@1 {
+		target = <&pwm3_pins_a>;
+		__overlay__ {
+			pins {
+				pinmux = <STM32_PINMUX('C', 6, AF2) STM32_PINMUX('C', 7, AF2)>; /* TIM3_CH4 */
+				bias-pull-down;
+				drive-push-pull;
+				slew-rate = <0>;
+			};
+		};
+	};
+	fragment@2 {
+		target = <&pwm3_sleep_pins_a>;
+		__overlay__ {
+			pins {
+				pinmux = <STM32_PINMUX('C', 6, ANALOG) STM32_PINMUX('C', 7, ANALOG)>; /* TIM3_CH4 */
+			};
+		};
+	};
+	fragment@3 {
+		target = <&timers3>;
+		__overlay__ {
+			status = "okay";
+			pwm {
+				status = "okay";
+				pinctrl-0 = <&pwm3_pins_a>;          
+				pinctrl-1 = <&pwm3_sleep_pins_a>;
+				pinctrl-names = "default", "sleep";
+			};
+		};
+	};
+	// fragment@0 {
+	// 	target-path = "/soc";
+	// 	__overlay__ {
+	// 		#address-cells = <0x1>;
+	// 		#size-cells = <0x1>;
+	// 		&pinctrl {
+	// 			pwm3_pins_a: pwm3-0 {
+	// 				pins {
+	// 					pinmux = <STM32_PINMUX('C', 6, AF2) STM32_PINMUX('C', 7, AF2)>; /* TIM3_CH4 */
+	// 					bias-pull-down;
+	// 					drive-push-pull;
+	// 					slew-rate = <0>;
+	// 				};
+	// 			};
+			
+	// 			pwm3_sleep_pins_a: pwm3-sleep-0 {
+	// 				pins {
+	// 					pinmux = <STM32_PINMUX('C', 6, ANALOG) STM32_PINMUX('C', 7, ANALOG)>; /* TIM3_CH4 */
+	// 				};
+	// 			};
+	// 		};
+	// 		&timers3 {
+	// 			#address-cells = <0x01>;
+	// 			#size-cells = <0x00>;
+	
+	// 			pwm {
+	// 				status = "okay";
+	// 				pinctrl-0 = <&pwm3_pins_a>;          
+	// 				pinctrl-1 = <&pwm3_sleep_pins_a>;
+	// 				pinctrl-names = "default", "sleep";
+	// 			};
+	// 		};
+	// 		&uart4 {
+	// 			status = "disabled";
+	// 		};
+	// 	};
+	// };
+};
