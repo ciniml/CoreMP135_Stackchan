@@ -13,7 +13,7 @@ CoreMP135向けのDebianイメージを書き込んで起動しておきます�
 # curlいれていないなら入れる
 apt install curl
 # パッケージをDL
-curl -OL https://github.com/ciniml/CoreMP135_Stackchan/...
+curl -OL https://github.com/ciniml/CoreMP135_Stackchan/releases/download/script_0.0.1/portc_pwm.tar.gz
 # 展開
 tar xf portc_pwm.tar.gz
 cd portc_pwm
