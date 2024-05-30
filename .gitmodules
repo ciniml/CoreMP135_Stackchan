@@ -1,3 +1,11 @@
 [submodule "dtbocfg"]
 	path = dtbocfg
 	url = https://github.com/ikwzm/dtbocfg.git
+[submodule "CoreMP135_buildroot"]
+	path = CoreMP135_buildroot
+	url = https://github.com/m5stack/CoreMP135_buildroot.git
+	branch = st/2023.02.2
+[submodule "CoreMP135_buildroot-external-st"]
+	path = CoreMP135_buildroot-external-st
+	url = https://github.com/m5stack/CoreMP135_buildroot-external-st.git
+	branch = st/2023.02.10
