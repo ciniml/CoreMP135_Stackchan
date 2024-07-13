@@ -1,0 +1,2 @@
+[target.armv7-unknown-linux-gnueabihf]
+linker = "/home/kenta/repos/CoreMP135_Stackchan/CoreMP135_buildroot/output/host/usr/bin/arm-buildroot-linux-gnueabihf-gcc"
