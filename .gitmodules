@@ -9,3 +9,9 @@
 	path = CoreMP135_buildroot-external-st
 	url = https://github.com/m5stack/CoreMP135_buildroot-external-st.git
 	branch = st/2023.02.10
+[submodule "stackchan/stackchan-rs"]
+	path = stackchan/stackchan-rs
+	url = https://github.com/ciniml/stackchan-rs.git
+[submodule "stackchan/m5stack-avatar-rs"]
+	path = stackchan/m5stack-avatar-rs
+	url = https://github.com/ciniml/m5stack-avatar-rs.git
