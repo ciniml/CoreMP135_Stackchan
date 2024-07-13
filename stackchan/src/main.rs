@@ -7,7 +7,9 @@ use m5stack_avatar_rs::{Avatar, components::{face::DrawContext, balloon::Balloon
 use embedded_graphics_simulator::{SimulatorDisplay, Window, OutputSettingsBuilder, BinaryColorTheme, SimulatorEvent};
 use nnnoiseless::{DenoiseState, RnnModel};
 use openai_api_rs::v1::{api::OpenAIClient, assistant::AssistantRequest, audio::{self, AudioSpeechRequest, AudioTranscriptionRequest, TTS_1, WHISPER_1}, chat_completion::{self, ChatCompletionMessage, ChatCompletionRequest}, common::GPT4_O};
+use rand::Rng;
 use rodio::{Decoder, Source};
+use scs_servo::device::{scs0009::Scs0009ServoControl, ServoControl};
 struct StdTimer {}
 
 mod framebuffer;
@@ -55,6 +57,33 @@ struct VoiceDetectionRequest {
 struct AvatarUpdateRequest {
     expression: Option<Expression>,
     text: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum SpeakerRequest {
+    Stop,
+    Beep,
+    Speak { content: String },
+}
+
+
+struct SerialReader<'a> {
+    serial: &'a std::cell::RefCell<Box<dyn serialport::SerialPort>>
+}
+struct SerialWriter<'a> {
+    serial: &'a std::cell::RefCell<Box<dyn serialport::SerialPort>>,
+}
+impl<'a> scs_servo::protocol::StreamReader for SerialReader<'a> {
+    type Error = serialport::Error;
+    fn read(&mut self, data: &mut [u8]) -> nb::Result<usize, Self::Error> {
+        self.serial.borrow_mut().read(data).map_err(|err| nb::Error::Other(serialport::Error::from(err)))
+    }
+}
+impl<'a> scs_servo::protocol::StreamWriter for SerialWriter<'a> {
+    type Error = serialport::Error;
+    fn write(&mut self, data: &[u8]) -> nb::Result<usize, Self::Error> {
+        self.serial.borrow_mut().write(data).map_err(|err| nb::Error::Other(serialport::Error::from(err)))
+    }
 }
 
 #[tokio::main]
@@ -113,7 +142,7 @@ async fn main() -> anyhow::Result<()> {
     let (audio_chunk_sender, mut audio_chunk_receiver) = tokio::sync::mpsc::channel::<[i16; DENOISE_CHUNK_LENGTH]>(2);
     let (voice_detection_request_sender, mut voice_detection_request_receiver) = tokio::sync::mpsc::channel::<VoiceDetectionRequest>(1);
     let (voice_detection_response_sender, mut voice_detection_response_receiver) = tokio::sync::mpsc::channel::<anyhow::Result<String>>(1);
-    let (speak_request_sender, mut speak_request_receiver) = tokio::sync::mpsc::channel::<String>(2);
+    let (speaker_request_sender, mut speaker_request_receiver) = tokio::sync::mpsc::channel::<SpeakerRequest>(2);
     let (avatar_update_request_sender, mut avatar_update_request_receiver) = tokio::sync::mpsc::channel::<AvatarUpdateRequest>(2);
     let (input_event_sender, mut input_event_receiver) = tokio::sync::mpsc::channel::<()>(2);
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -280,37 +309,52 @@ async fn main() -> anyhow::Result<()> {
         let lipsync_average = lipsync_average.clone();
         tokio::spawn(async move {
             let mut speak_sink: Option<rodio::Sink> = None;
-            while let Some(content) = speak_request_receiver.recv().await {
-                if content.is_empty() {
-                    if let Some(sink) = speak_sink.take() {
-                        sink.stop();
-                    }
-                    continue;
-                }
-                let req = AudioSpeechRequest::new(
-                    TTS_1.to_string(),
-                    content,
-                    audio::VOICE_ALLOY.to_string(),
-                    String::from(speech_output_path),
-                );
-                let result = client.audio_speech(req).await;
-                match result {
-                    Ok(_response) => {
-                        let file = std::io::BufReader::new(std::fs::File::open(speech_output_path).unwrap());
-                        let source = Decoder::new(file).unwrap();
-                        //stream_handle.play_raw(source.convert_samples()).unwrap();
+            while let Some(content) = speaker_request_receiver.recv().await {
+                match content {
+                    SpeakerRequest::Stop => {
                         if let Some(sink) = speak_sink.take() {
                             sink.stop();
                         }
+                        continue;
+                    },
+                    SpeakerRequest::Beep => {
+                        if let Some(sink) = speak_sink.take() {
+                            sink.stop();
+                        }
+                        let source = rodio::source::SineWave::new(880.0).take_duration(Duration::from_millis(250));
                         let sink = rodio::Sink::try_new(&stream_handle).unwrap();
-                        sink.append(LipSyncSource::new(source, lipsync_average.clone()));
+                        sink.append(source);
                         sink.play();
                         speak_sink = Some(sink);
                     },
-                    Err(err) => {
-                        log::error!("Failed to speak: {:?}", err);
+                    SpeakerRequest::Speak { content } => {
+                        let req = AudioSpeechRequest::new(
+                            TTS_1.to_string(),
+                            content,
+                            audio::VOICE_ALLOY.to_string(),
+                            String::from(speech_output_path),
+                        );
+                        let result = client.audio_speech(req).await;
+                        match result {
+                            Ok(_response) => {
+                                let file = std::io::BufReader::new(std::fs::File::open(speech_output_path).unwrap());
+                                let source = Decoder::new(file).unwrap();
+                                //stream_handle.play_raw(source.convert_samples()).unwrap();
+                                if let Some(sink) = speak_sink.take() {
+                                    sink.stop();
+                                }
+                                let sink = rodio::Sink::try_new(&stream_handle).unwrap();
+                                sink.append(LipSyncSource::new(source, lipsync_average.clone()));
+                                sink.play();
+                                speak_sink = Some(sink);
+                            },
+                            Err(err) => {
+                                log::error!("Failed to speak: {:?}", err);
+                            }
+                        }
                     }
                 }
+                
             }
         });
     }
@@ -395,7 +439,56 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(not(feature="framebuffer"))]
             let mut window = Window::new("Avatar", &output_settings);
 
+            let serial_port = env::var("SERVO_UART").expect("SERVO_UART is not set");
+            let serial_echo = env::var("SERVO_UART_ECHO").unwrap_or("0".into()).parse().unwrap_or(0) != 0usize;
+            let serial = serialport::new(serial_port, 1000000)
+                .open()
+                .expect("Failed to open serial port");
+            let serial = std::cell::RefCell::new(serial);
+            serial.borrow_mut().set_timeout(std::time::Duration::from_millis(10)).expect("Failed to set timeout");
+
+            let config = scs_servo::protocol::ProtocolMasterConfig {
+                echo_back: serial_echo,
+            };
+            let (mut servo_control_pan, pan_position_to_raw) = {
+                let reader = SerialReader { serial: &serial };
+                let writer = SerialWriter { serial: &serial };
+                let mut servo_control = Scs0009ServoControl::<_, _, std::time::Instant>::new(2, reader, writer, config.clone(), std::time::Duration::from_secs(2));
+                let lower_limit = servo_control.position_lower_limit().expect("Failed to get lower limit") as f64;
+                let upper_limit = servo_control.position_upper_limit().expect("Failed to get upper limit") as f64;
+                (servo_control, move |position: f64| ((upper_limit - lower_limit) * position + lower_limit) as u16)
+            };
+            let (mut servo_control_tilt, tilt_position_to_raw) = {
+                let reader = SerialReader { serial: &serial };
+                let writer = SerialWriter { serial: &serial };
+                let mut servo_control = Scs0009ServoControl::<_, _, std::time::Instant>::new(1, reader, writer, config.clone(), std::time::Duration::from_secs(2));
+                let lower_limit = servo_control.position_lower_limit().expect("Failed to get lower limit") as f64;
+                let upper_limit = servo_control.position_upper_limit().expect("Failed to get upper limit") as f64;
+                (servo_control, move |position: f64| ((upper_limit - lower_limit) * position + lower_limit) as u16)
+            };
+
+            // Initialize servo
+            servo_control_pan.set_target_position(pan_position_to_raw(0.5)).ok();
+            servo_control_pan.set_target_period(servo_control_pan.to_period(2.0).unwrap()).ok();
+            servo_control_tilt.set_target_position(tilt_position_to_raw(0.5)).ok();
+            servo_control_tilt.set_target_period(servo_control_tilt.to_period(2.0).unwrap()).ok();
+
+            // RNG
+            let mut rng = rand::thread_rng();
+
+            let mut servo_update_counter = 0usize;
             'main_loop: loop {
+                // Check move servo.
+                if servo_update_counter >= 150 && rng.gen::<f64>() < 0.125/2.0 {
+                    let pan_position = rng.gen::<f64>() * 0.2 + 0.4;
+                    let tilt_position = rng.gen::<f64>() * 0.15 + 0.47;
+                    servo_control_pan.set_target_position(pan_position_to_raw(pan_position)).ok();
+                    servo_control_tilt.set_target_position(tilt_position_to_raw(tilt_position)).ok();
+                    servo_update_counter = 0;
+                } else {
+                    servo_update_counter = servo_update_counter.wrapping_add(1);
+                }
+
                 let next_time = tokio::time::Instant::now() + Duration::from_millis(1000/30);
                 display.clear(clear_color).ok();
 
@@ -480,7 +573,9 @@ async fn main() -> anyhow::Result<()> {
         // Wait input
         let _ = input_event_receiver.recv().await;
 
-        let _ = speak_request_sender.send_timeout("".into(), Duration::from_millis(1000)).await;
+        let _ = speaker_request_sender.send_timeout(SpeakerRequest::Beep, Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
 
         let _ = avatar_update_request_sender.send(AvatarUpdateRequest {
             expression: Some(Expression::Neutral),
@@ -562,12 +657,12 @@ async fn main() -> anyhow::Result<()> {
                         name: None,
                     });
                     // Post the completion to the speaker.
-                    let _ = speak_request_sender.send_timeout(content.clone(), Duration::from_millis(1000)).await;
+                    let _ = speaker_request_sender.send_timeout(SpeakerRequest::Speak { content: content.clone() }, Duration::from_millis(1000)).await;
                 }
             },
             Err(err) => {
                 log::error!("Failed to chat completion: {:?}", err);
-                let _ = speak_request_sender.send_timeout("エラーが発生しました。".into(), Duration::from_millis(1000)).await;
+                let _ = speaker_request_sender.send_timeout(SpeakerRequest::Speak { content: "エラーが発生しました。".into() }, Duration::from_millis(1000)).await;
                 let _ = avatar_update_request_sender.send(AvatarUpdateRequest {
                     expression: Some(Expression::Sad),
                     text: Some("Error!".into()),

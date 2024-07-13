@@ -21,10 +21,13 @@ framebuffer = "0.3.1"
 hound = "3.5.1"
 log = { version = "0.4.22", features = ["std"] }
 m5stack-avatar-rs = { version = "0.1.0", path = "m5stack-avatar-rs", features = ["std"] }
+nb = "1.1.0"
 nnnoiseless = "0.5.1"
 openai-api-rs = "5.0.0"
+rand = "0.8.5"
 rodio = "0.19.0"
 scs-servo = { path = "./scs-servo-rs/scs-servo", features = ["std"] }
+serialport = { version = "4.4.0", default-features = false }
 stackchan-rs = { version = "0.1.0", path = "stackchan-rs" }
 tokio = { version = "1.38.0", features = ["full"] }
 tokio-macros = "2.3.0"
