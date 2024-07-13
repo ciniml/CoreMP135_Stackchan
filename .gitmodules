@@ -15,3 +15,6 @@
 [submodule "stackchan/m5stack-avatar-rs"]
 	path = stackchan/m5stack-avatar-rs
 	url = https://github.com/ciniml/m5stack-avatar-rs.git
+[submodule "stackchan/scs-servo-rs"]
+	path = stackchan/scs-servo-rs
+	url = https://github.com/ciniml/scs-servo-rs.git
