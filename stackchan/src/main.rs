@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, env, error::Error, sync::{Arc, Mutex}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{borrow::BorrowMut, env, error::Error, sync::{atomic::AtomicBool, Arc, Mutex}, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 use anyhow::anyhow;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -396,11 +396,14 @@ async fn main() -> anyhow::Result<()> {
     //
     // Display process
     //
+    let can_pan_tilt_move = Arc::new(AtomicBool::new(false));
+    let can_pan_tilt_move_clone = can_pan_tilt_move.clone();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     std::thread::spawn(move || {
+        let can_pan_tilt_move = can_pan_tilt_move_clone;
         let local = tokio::task::LocalSet::new();
         local.spawn_local(async move  {
             #[cfg(not(feature="framebuffer"))]
@@ -469,9 +472,9 @@ async fn main() -> anyhow::Result<()> {
 
             // Initialize servo
             servo_control_pan.set_target_position(pan_position_to_raw(0.5)).ok();
-            servo_control_pan.set_target_period(servo_control_pan.to_period(2.0).unwrap()).ok();
+            servo_control_pan.set_target_period(servo_control_pan.to_period(1.5).unwrap()).ok();
             servo_control_tilt.set_target_position(tilt_position_to_raw(0.5)).ok();
-            servo_control_tilt.set_target_period(servo_control_tilt.to_period(2.0).unwrap()).ok();
+            servo_control_tilt.set_target_period(servo_control_tilt.to_period(1.5).unwrap()).ok();
 
             // RNG
             let mut rng = rand::thread_rng();
@@ -479,14 +482,18 @@ async fn main() -> anyhow::Result<()> {
             let mut servo_update_counter = 0usize;
             'main_loop: loop {
                 // Check move servo.
-                if servo_update_counter >= 150 && rng.gen::<f64>() < 0.125/2.0 {
-                    let pan_position = rng.gen::<f64>() * 0.2 + 0.4;
-                    let tilt_position = rng.gen::<f64>() * 0.15 + 0.47;
-                    servo_control_pan.set_target_position(pan_position_to_raw(pan_position)).ok();
-                    servo_control_tilt.set_target_position(tilt_position_to_raw(tilt_position)).ok();
-                    servo_update_counter = 0;
-                } else {
-                    servo_update_counter = servo_update_counter.wrapping_add(1);
+                if can_pan_tilt_move.load(std::sync::atomic::Ordering::Relaxed) {
+                    if servo_update_counter >= 150 && rng.gen::<f64>() < 0.125/2.0 {
+                        let pan_position = rng.gen::<f64>() * 0.2 + 0.4;
+                        let tilt_position = rng.gen::<f64>() * 0.15 + 0.47;
+                        servo_control_pan.set_target_period(servo_control_pan.to_period(1.5).unwrap()).ok();
+                        servo_control_tilt.set_target_period(servo_control_tilt.to_period(1.5).unwrap()).ok();
+                        servo_control_pan.set_target_position(pan_position_to_raw(pan_position)).ok();
+                        servo_control_tilt.set_target_position(tilt_position_to_raw(tilt_position)).ok();
+                        servo_update_counter = 0;
+                    } else {
+                        servo_update_counter = servo_update_counter.wrapping_add(1);
+                    }
                 }
 
                 let next_time = tokio::time::Instant::now() + Duration::from_millis(1000/30);
@@ -571,7 +578,9 @@ async fn main() -> anyhow::Result<()> {
     ];
     loop {
         // Wait input
+        can_pan_tilt_move.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = input_event_receiver.recv().await;
+        can_pan_tilt_move.store(false, std::sync::atomic::Ordering::Relaxed);
 
         let _ = speaker_request_sender.send_timeout(SpeakerRequest::Beep, Duration::from_millis(1000)).await;
         tokio::time::sleep(Duration::from_millis(500)).await;
